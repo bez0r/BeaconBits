@@ -123,7 +123,7 @@ def population_fix(data):
     return(goods)
 
 def pdns_Lookup(ip_value):
-    pdns = redis.StrictRedis(host='localhost', port=6379, db=2)
+    pdns = redis.StrictRedis(host='localhost', port=6379, db=0)
     result = pdns.hget('IP:'+ip_value, 'name')
     return(result)
 
