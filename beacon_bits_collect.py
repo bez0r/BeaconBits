@@ -54,7 +54,7 @@ def main():
         argus = subprocess.Popen(command,stdout=subprocess.PIPE,shell=True)    
 
 	#redis
-        r = redis.StrictRedis(host='localhost', port=6379, db=1)
+        r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
         while True:
                 argus.poll()                   
