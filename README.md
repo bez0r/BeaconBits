@@ -1,6 +1,8 @@
 BeaconBits
 ==========
 
+Beacon Bits is comprised of analytical scripts combined with a custom database that evaluate flow traffic for statistical uniformity over a given period of time.  The tool relies on some of the most common characteristics of infected host persisting in connection attempts to establish a connection, either to a remote host or set of host over a TCP network connection.  Useful to also identify automation, host behavior that is not driven by humans.
+
 Network timing evaluation used to detect beacons, works with argus flow as the source
 
 This is an updated version and migrated from the google page by the same name.
