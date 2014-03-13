@@ -7,19 +7,17 @@
 
 
 import sys
-import argparse
-import datetime
-import time
-import math
 import redis
-import formatter
 
-options = None      #default for options
-acceptable = ['all','top','All','Top']
+
+# below is required to support graph output.
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+
+
 worklist = []
 tempset = []
-mvalue = False
-toplist1 = ()
 toplist = []
 
 
@@ -30,7 +28,7 @@ toplist = []
 
 # magic values bring attention to specific intervals of beacon by changing to the color of the graph from default yellow to orange
 # add or remove as needed, the values are in seconds
-magic_values = 15,29,30,31,59,60,61,89,90,91,119,120,121,239,240,241,299,300,301,400,514,600,720,900,1200,1600,1799,1800,2400,3600,4200,43200,86400
+magic_values = 15,29,30,31,59,60,61,89,90,91,119,120,121,239,240,241,299,300,301,400,514,600,720,900,1200,1600,1799,1800,2400,3600,4200,7220,43200,86400
 
 
 #  minimal count to consider for beaconbits
@@ -122,10 +120,6 @@ def population_fix(data):
     goods.pop(0)
     return(goods)
 
-def pdns_Lookup(ip_value):
-    pdns = redis.StrictRedis(host='localhost', port=6379, db=0)
-    result = pdns.hget('IP:'+ip_value, 'name')
-    return(result)
 
 def quick_mean(data):
     goods=[]
@@ -143,15 +137,12 @@ def quick_mean(data):
 
 
 def scatter_plot(data):
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import random
     # LABEL,MEAN(seconds),VARIANCE,COUNT
-    plt.ylabel('Variance',fontsize=20)
-    plt.xlabel('Mean in Seconds', fontsize=20)
+    plt.ylabel('Variance',fontsize=16)
+    plt.xlabel('Mean in Seconds', fontsize=16)
     plt.title('Beacon Bits')
-    plt.grid(True)
-    base_color = 'yellow'
+    plt.grid(True, which='major', axis='both')
+    #base_color = 'yellow'
     for each in data:
 	label = str(each[1])+":"+str(each[2]) # dst IP address
 	x = each[5]     # mean
@@ -164,38 +155,47 @@ def scatter_plot(data):
 	else:
 	    base_color = 'yellow'
 	
+	# spot variables are used to move around the lables
         spot = random.randrange(-40,40,10)
-        plt.scatter(x,y,z,cmap = plt.get_cmap('Spectral'))
-	plt.annotate(label, xy = (x, y), xytext = (spot, spot),
+	spot1 = random.randrange(-40,40,10)
+        plt.scatter(x,y,z,cmap = plt.get_cmap('Spectral'),c='b',alpha=0.7)
+	plt.annotate(label, xy = (x, y), xytext = (spot, spot1),
             textcoords = 'offset points', ha = 'right', va = 'bottom',
-            bbox = dict(boxstyle = 'round,pad=0.5', fc = base_color, alpha = 0.5),
+            bbox = dict(boxstyle = 'round,pad=0.5', fc = base_color, alpha = 0.3),
             arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
 
     plt.show()
     pass
 
 
+import subprocess
+
+
+def quicklookup(ipvalue):
+    ''' use of nslookup '''
+    newvalue = ''
+    lookup =subprocess.check_output(["/usr/bin/nslookup", ipvalue])# Execute nslookup
+    lookupvalues = lookup.split('\n')
+    #print lookupvalues
+    if 'Name' in lookupvalues[4]:
+	    print lookupvalues
+	    newvalue = lookupvalues[4]
+    else:
+	    newvalue = 'n/a'
+    return(lookupvalues)
+
+ 
 def main():
-        global options
-        
-        parser = argparse.ArgumentParser(description='Beacon bits is a time series analyzer for beacons. Requires Redis server running on default port and writes to db0.')
-
-        args = parser.parse_args()
-        print args
-
-	print 'This version only prints top output'
         print 'src_ip','         dst_ip','        dst_port','set_date','pair_count','mean','duration','var','src_count','dst_count','visitors'
-
 
         '''open a connection to the local redis database'''        
         r = redis.StrictRedis(host='localhost', port=6379, db=1)
 
-        roundone = r.keys('SET:*')
+        roundone = r.keys('SET:*') # SET: is the basic key we will use to make a worklist
         for each in roundone:
                 newcount = r.scard(each)
-                if newcount >= set_minvalue and newcount <= set_maxvalue:
+                if newcount >= set_minvalue and newcount <= set_maxvalue: #first test
                     worklist.append(each)
-
 
         for each in worklist:
                 tab_queue = 0
@@ -228,7 +228,7 @@ def main():
                 else:
                     print 'failure for', each
                     break
-		duration_est = (mean * pair_count) / 60
+		duration_est = (mean * pair_count) / 60 / 60
 		if dst_count !=  None and pair_count != None:
 		    visitors =   int(dst_count) / int(pair_count)
 		if compvar <= set_comp_var and mean >= set_minimal_mean and set_dst_port not in not_port:
@@ -244,11 +244,23 @@ def main():
 
         ''' printing top values'''
         toplist.sort()
+	print 'here'
         for each in toplist:
-            dom1 = "lookup value" #pdns_Lookup(each[1])
+            dom1 = ''#quicklookup(each[1])
             print "{0:15} {1:15} {2:7} {3:8} {4:6} {5:6} {6:4} {7:8} {8:6} {9:6} {10:6} {11:16}".format(each[0],each[1],each[2],each[3],each[4],each[5],each[6],each[7],each[8],each[9],each[10],dom1)
         print "Finished"
-	
+
+	# plot cleaner, removes repeated ip destination and destination port pairs in the plot
+	tester_hold = []
+	for each in toplist:
+	    tester = str(each[1])+str(each[2])  #dstIP and dstPort key
+	    if tester not in tester_hold: # check key
+		tester_hold.append(tester) # keep
+		#print 'keep',each
+	    else:
+		toplist.remove(each)
+		#print 'del',each
+		
 	''' scatter plot '''
 	scatter_plot(toplist)
 	
