@@ -1,0 +1,139 @@
+# Gravity Well, beaconbits evaluator
+# __author__ = "Kevin Noble"
+# __credits__ = ["Pete Nelson"]
+# __license__ = "GPLv3"
+# __version__ = "11"
+
+import sys
+import redis
+
+RED_IS = redis.StrictRedis(host='127.0.0.1', port=6379, db=1)
+
+# variable
+
+toplist = [] 
+tempset = []
+
+#  minimal count to consider for beaconbits for a given day
+# Takes 3 to beacon, ideal is proablaby 12
+set_minvalue = 8
+
+# Maximum number beacons (timing events) to consideration, large sets cause performance issues
+# this threshold is set at 30000 for demo purposes but you might want to set really high for a first run
+# set low, to 5000 if you have confidence in checking through netflow or other top analytical methods
+set_maxvalue = 1800
+
+# Lowest mean time between beacons to consider for calculation.
+# 900 seconds in 15 minutes, aggressive would be 300 (900)
+set_duration_estimate = 60
+
+# Allowance for highest visitor count, that is to say how many differnt host have visited a given destination IP
+# If an external IP communicates with lots of internal host, probably safe.
+set_visitor = 25
+
+# TOP value for highest compensated variance
+# setting to 10 really gives the most idealistic beacons
+# setting to 300 is fairly broad but useful while evaluating effectiveness
+set_comp_var = 1600
+
+# TOP values for compvar
+# compansated variance divided by time gives a factor that allows for tolerance that is quite different then standard deviation
+# set to 140 to get a large factor of beacons, and divide by half as needed, probably don't want to drop below 35
+# if you find the top
+set_compvar_time_factor = 800
+
+# minimal mean to consider in seconds
+# want to avoid mean values below 15 seconds for example, depends on the network but 5 seconds would be decent
+set_minimal_mean = 3
+
+# ignore specific destination ports
+not_port = ['25']
+
+def compensated_variance(data):
+    n = 0
+    sum1 = 0
+    for x in data:
+        n = n + 1
+        sum1 = sum1 + int(x)
+    mean = sum1/n
+    sum2 = 0
+    sum3 = 0
+    for x in data:
+        sum2 = sum2 + (int(x) - mean)**2
+        sum3 = sum3 + (int(x) - mean)
+    variance = (sum2 - sum3**2/n)/(n - 1)
+    return variance
+
+def population_fix(data):
+    goods=[]
+    diff = int(data[1]) - int(data[0])
+    for each in data:
+	workvalue = int(each) - int(diff)
+	goods.append(workvalue)
+	diff = each
+    goods.pop(0)
+    return(goods)
+
+def quick_mean(data):
+    goods=[]
+    diff = int(data[1]) - int(data[0])
+    for each in data:
+	workvalue = int(each) - int(diff)
+	goods.append(workvalue)
+	diff = each
+    goods.pop(0)
+    mean = 0
+    for each in goods:
+	mean += int(each)
+    return(mean/len(goods))
+
+def main():
+    print 'Retrieving keys'
+    roundone = RED_IS.keys('SET:*')
+    print 'processing keys', len(roundone), 'keys'
+    for each in roundone:
+	if RED_IS.scard(each) >= set_minvalue and RED_IS.scard(each) <= set_maxvalue:
+	    pair_count = RED_IS.scard(each)
+	    tempset = RED_IS.sort(each, alpha=True)
+	    if int(tempset[-1])-int(tempset[0]) >= set_duration_estimate:
+		mean = quick_mean(tempset)
+		if mean >= set_minimal_mean:
+		    duration_est = (mean * pair_count) #/60/60
+		    compvar = compensated_variance(population_fix(tempset))
+		    if compvar <= set_compvar_time_factor:
+			sets_sub = each.split(':')
+			set_src_ip = sets_sub[1]
+			set_dst_ip = sets_sub[2]
+			set_dst_port = sets_sub[3]
+			set_date = sets_sub[4]
+			src_keys = RED_IS.keys('ip_src:'+set_src_ip+':*')
+			dst_keys = RED_IS.keys('ip_dst:'+set_dst_ip+':*')
+			src_count = 0
+			dst_count = 0
+			for subkey_src in src_keys:
+			    src_count = src_count + int(RED_IS.get(subkey_src))
+			for subkey_dst in dst_keys:
+		            dst_count = dst_count + int(RED_IS.get(subkey_dst))
+			visitors =   int(dst_count) / int(pair_count)
+			if visitors <= set_visitor:
+			    if compvar <= set_comp_var and mean >= set_minimal_mean and set_dst_port not in not_port:
+				holder = [set_src_ip,set_dst_ip,set_dst_port,set_date,pair_count,mean,duration_est,compvar,src_count,dst_count,visitors]
+				if holder not in toplist:
+				    toplist.append(holder)
+
+    toplist.sort()
+    print "{0:15} {1:15} {2:7} {3:8} {4:6} {5:6} {6:4} {7:8} {8:6} {9:6} {10:6} ".format('srcIP','dstIP','dport','date','paircount','mean','duration','var','src_count','dst_count','visitors')
+    for each in toplist:
+        print "{0:15} {1:15} {2:7} {3:8} {4:6} {5:6} {6:4} {7:8} {8:6} {9:6} {10:6} ".format(each[0],each[1],each[2],each[3],each[4],each[5],each[6],each[7],each[8],each[9],each[10])
+    tester_hold = []
+    for each in toplist:
+	tester = str(each[1])+str(each[2])
+	if tester not in tester_hold:
+	    tester_hold.append(tester)
+	else:
+	    toplist.remove(each)
+if __name__ == '__main__':
+        try: sys.exit(main())
+        except KeyboardInterrupt: pass
+  
+
